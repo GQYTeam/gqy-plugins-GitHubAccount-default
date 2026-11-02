@@ -445,6 +445,46 @@ test('github-account-default 隔离与越界探针', async () => {
   fs.symlinkSync(path.join(githubRootFixture, 'loop-b'), path.join(githubRootFixture, 'loop-a'), 'dir');
   fs.symlinkSync(path.join(githubRootFixture, 'loop-a'), path.join(githubRootFixture, 'loop-b'), 'dir');
 
+  // 子路径逃逸夹具：profile 目录本身在根内，但 gh/ 、gitconfig、gh-state/ 指向根外。
+  const writeProfileFixture = (dir, slug, login, id) => {
+    writeFixture(path.join(dir, 'account.json'), JSON.stringify({ login, id }) + '\n');
+    writeFixture(
+      path.join(dir, 'profile.json'),
+      JSON.stringify({
+        schema: 1,
+        plugin: PLUGIN_ID,
+        version: '1.0.0',
+        profile: slug,
+        slug,
+        host: 'github.com',
+        login,
+        id,
+        scopes: [],
+        source: 'import',
+        token_kind: null,
+        git: { name: login, email: '' },
+        created_at: '2026-11-02T00:00:00Z',
+        updated_at: '2026-11-02T00:00:00Z',
+        logged_in: true,
+      }) + '\n'
+    );
+  };
+  const escapeGhProfileDir = path.join(githubRootFixture, 'escape-gh');
+  fs.mkdirSync(escapeGhProfileDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(escapeGhProfileDir, 0o700);
+  writeProfileFixture(escapeGhProfileDir, 'escape-gh', 'escape-gh-login', 515101);
+  fs.symlinkSync(path.join(outsideDir, 'gh'), path.join(escapeGhProfileDir, 'gh'), 'dir');
+  const escapeGitconfigProfileDir = path.join(githubRootFixture, 'escape-gitconfig');
+  fs.mkdirSync(escapeGitconfigProfileDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(escapeGitconfigProfileDir, 0o700);
+  writeProfileFixture(escapeGitconfigProfileDir, 'escape-gitconfig', 'escape-gitconfig-login', 515102);
+  fs.symlinkSync(path.join(outsideDir, 'gitconfig'), path.join(escapeGitconfigProfileDir, 'gitconfig'), 'file');
+  const escapeStateProfileDir = path.join(githubRootFixture, 'escape-state');
+  fs.mkdirSync(escapeStateProfileDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(escapeStateProfileDir, 0o700);
+  writeProfileFixture(escapeStateProfileDir, 'escape-state', 'escape-state-login', 515103);
+  fs.symlinkSync(outsideDir, path.join(escapeStateProfileDir, 'gh-state'), 'dir');
+
   const outsideSnapshotBefore = snapshotTree(outsideDir);
   const outsideAccountBefore = snapshotFile(path.join(outsideDir, 'account.json'));
   const githubDirsBeforeSpawn = new Set(
@@ -586,6 +626,10 @@ test('github-account-default 隔离与越界探针', async () => {
     checkEqual(statusEvil.logged_in, false, 'status 对根外软链应 logged_in:false（不读逃逸目录）');
     checkEqual(statusEvil.account, null, 'status 对根外软链应 account:null（不读逃逸目录）');
     checkEqual(statusEvil.pending, null, 'status 对根外软链应 pending:null');
+    checkEqual(statusEvil.source, null, 'status 对根外软链应 source:null');
+    check(Array.isArray(statusEvil.scopes) && statusEvil.scopes.length === 0, 'status 对根外软链应 scopes:[]');
+    checkEqual(statusEvil.has_pending, false, 'status 对根外软链应 has_pending:false');
+    check(Boolean(statusEvil.git) && typeof statusEvil.git === 'object', 'status 对根外软链应给 git 对象（空身份）');
     const statusEvilRaw = JSON.stringify(statusEvil);
     check(!statusEvilRaw.includes(OUTSIDE_FAKE_LOGIN), 'status 不得泄露根外目录里的假 login');
     check(!statusEvilRaw.includes(OUTSIDE_FAKE_TOKEN), 'status 不得泄露根外目录里的假令牌标记');
@@ -614,6 +658,29 @@ test('github-account-default 隔离与越界探针', async () => {
     softResult(await client.call('status', { profile: 'loop-a' }), 'status 对软链环');
     softResult(await client.call('logout', { profile: 'loop-a' }), 'logout 对软链环');
     softResult(await client.call('env', { profile: 'loop-a' }), 'env 对软链环');
+
+    // 3b-5b) 子路径软链逃逸：profile 目录在根内，但 gh/ 、gitconfig、gh-state/ 指向根外
+    const SUBPATH_ESCAPES = [
+      ['escape-gh', 'gh/'],
+      ['escape-gitconfig', 'gitconfig'],
+      ['escape-state', 'gh-state/'],
+    ];
+    for (const [name, what] of SUBPATH_ESCAPES) {
+      const label = name + ' 的 ' + what + ' 指向根外';
+      const envSub = await client.expectError('env', { profile: name }, -32000, label + ' 时 env 应返回 -32000');
+      check(/^profile 目录/.test(String(envSub.message)), label + ' 时 env 的错误消息应以「profile 目录」开头（实际：' + String(envSub.message) + '）');
+      const ghSub = await client.expectError('gh', { profile: name, args: ['--version'] }, -32000, label + ' 时 gh 应返回 -32000');
+      check(/^profile 目录/.test(String(ghSub.message)), label + ' 时 gh 的错误消息应以「profile 目录」开头（实际：' + String(ghSub.message) + '）');
+      const logoutSub = await client.expectError('logout', { profile: name }, -32000, label + ' 时 logout 应返回 -32000');
+      check(/^profile 目录/.test(String(logoutSub.message)), label + ' 时 logout 的错误消息应以「profile 目录」开头（实际：' + String(logoutSub.message) + '）');
+      const subpathStatus = await client.callAction('status', { profile: name });
+      checkEqual(subpathStatus.isolated && subpathStatus.isolated.outside_writes, true, label + ' 时 status 应标 isolated.outside_writes:true');
+      checkEqual(subpathStatus.logged_in, false, label + ' 时 status 应 logged_in:false（不读逃逸目录）');
+      checkEqual(subpathStatus.account, null, label + ' 时 status 应 account:null');
+      const subpathRaw = JSON.stringify(subpathStatus);
+      check(!subpathRaw.includes(OUTSIDE_FAKE_LOGIN), label + ' 时 status 不得泄露根外假 login');
+      check(!subpathRaw.includes(OUTSIDE_FAKE_TOKEN), label + ' 时 status 不得泄露根外假令牌标记');
+    }
 
     // 3b-6) 根外目录零增删改，且进程仍可服务
     const outsideAfterSymlinkProbes = snapshotTree(outsideDir);
@@ -733,7 +800,7 @@ test('github-account-default 隔离与越界探针', async () => {
       INVALID_PROFILES.length +
       ' 个非法 profile × ' +
       PROFILE_PROBE_ACTIONS.length +
-      ' 个动作、软链越界/合法软链/软链环回归、诱饵未变、根外无写入，' +
+      ' 个动作、软链越界（含子路径）/合法软链/软链环回归、诱饵未变、根外无写入，' +
       (ownedDirCount > 0 ? '含 ' + ownedDirCount + ' 个插件自有子目录的权限检查' : '离线未创建 profile 目录，权限检查限于已创建层级') +
       '，' +
       checks +

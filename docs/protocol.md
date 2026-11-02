@@ -67,7 +67,7 @@ $GQY_HOME/github/
 
 ## 5. 动作契约
 
-所有动作都接受可选 `profile`（string，缺省 `顾清影` 规范化的 slug）。除 `status` / `env` 外，未登录时动作返回 `-32000`（消息以「未登录」开头，并提示先 `login`）——但 `login` / `login-wait` / `logout` / `status` / `env` 本身允许未登录调用。
+所有动作都接受可选 `profile`（string，缺省 `顾清影` 规范化的 slug）。未登录可用的动作是 `status` / `env` / `login` / `login-wait` / `logout`（`logout` 幂等）；只有 `gh` / `git` 在未登录时返回 `-32000`（消息以「未登录」开头，提示先 `login`）。
 
 ### 5.1 `status`
 
@@ -205,7 +205,7 @@ $GQY_HOME/github/
 - `args` 必须是 1–64 个非空字符串、单个 ≤4096 字符、不含 NUL（否则 `-32602`）；argv 直接 `spawn`，不过 shell、不做变量展开。
 - profile 目录（含软链目标）在根外 → `-32000`「profile 目录…」，不用逃逸的 `GH_CONFIG_DIR` / `GIT_CONFIG_GLOBAL` 起子进程。
 - 未登录 → `-32000`「未登录」。
-- `gh` 额外拒绝：`auth token`（任一段，含 `--show-token`）→ `-32000`「不通过插件取令牌」；`auth login` / `auth logout` → `-32000`「登录用 login 动作」（`--show-token` 属同一防御：令牌不经插件输出）。
+- `gh` 额外拒绝：逐段匹配到相邻的 `auth` + `token`（例如 `gh auth token`）→ `-32000`「不通过插件取令牌」；相邻 `auth` + `login` / `auth` + `logout` → `-32000`「登录用 login 动作」；任一参数含 `--show-token` 同样 `-32000`。
 - `git` 的 `cwd` 必须存在且是目录（否则 `-32602`），缺省插件进程 cwd。
 - 返回 `{"exit_code":<n|null>,"stdout":"...","stderr":"...","duration_ms":<n>,"timed_out":false,"truncated":{"stdout":false,"stderr":false},"tool":"gh|git"}`。
 - 超时：默认 30s、上限 90s；到点 `SIGTERM`，2s 不退出再 `SIGKILL`，返回 `exit_code:null,timed_out:true` 与已收到的输出。
@@ -304,7 +304,7 @@ github.com:
 
 - 令牌只在两处存在：进程内存、`gh/hosts.yml`（0600）。`pending.json` 只有 device_code（短时有效、不可换 token 之外的能力），结束即删。
 - 脱敏模式：`gh[pousr]_[A-Za-z0-9]{16,}`、`github_pat_[A-Za-z0-9_]{16,}` → `gh*_…<末 4 位>`；同时脱敏 `Authorization: ...` 头与 `oauth_token: ...` 行。
-- `gh` 动作结构性拒绝令牌输出：`auth token`（含 `--show-token` 变体）直接报错，不给「先取出来再脱敏」的机会。
+- `gh` 动作结构性拒绝令牌输出：相邻 `auth` + `token` 与任何 `--show-token` 参数直接报错，不给「先取出来再脱敏」的机会。
 - 错误消息只给原因与状态码，不给请求头、响应体原文（除 GitHub 的 `error` / `error_description` 短字段）。
 - 不写请求日志；stderr 只写 `[github-account] <action> ok|fail <duration>ms` 这类元信息。
 

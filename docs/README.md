@@ -129,7 +129,7 @@
 ## 当前状态
 
 - 实现：`index.js`（零依赖，只用 Node 内置模块；Node ≥18）、`manifest.json`、`package.json`。
-- 测试：`test/manifest.mjs`、`test/handshake.mjs`、`test/isolation.mjs`、`test/real-upstream.mjs`，`package.json` 的 `test` 依次串起四组。离线三组测试通过（manifest 229 项 / handshake 347 项 / isolation 483 项检查）；真实上游用例需 `GQY_GITHUB_TEST_TOKEN` / `GQY_GITHUB_TEST_LAYOUT`，无令牌时打印 SKIP 并 exit 0，带 `GQY_GITHUB_TEST_LAYOUT` 时 281 项通过。
+- 测试：`test/manifest.mjs`、`test/handshake.mjs`、`test/isolation.mjs`、`test/real-upstream.mjs`，`package.json` 的 `test` 依次串起四组。离线三组测试通过（manifest 229 项 / handshake 347 项 / isolation 562 项检查）；真实上游用例需 `GQY_GITHUB_TEST_TOKEN` / `GQY_GITHUB_TEST_LAYOUT`，无令牌时打印 SKIP 并 exit 0，带 `GQY_GITHUB_TEST_LAYOUT` 时 281 项通过。
 - 自检命令：`cd gqy-plugins-GitHubAccount-default && node --check index.js && npm test`；`make check` = `make syntax`（`node --check` 全部 `.js` / `.mjs`）+ `make test`。
 - 四组测试各覆盖：
   1. `test/manifest.mjs`：manifest 全字段按 [`GQY/docs/blueprint/plugin.md`](../../GQY/docs/blueprint/plugin.md) 校验（id / name / version / description / protocol / command / cwd / timeout_ms / concurrency / actions / provides / requires，动作集合恰为七个、动作名正则、description 长度、schema 根 `type: object`、必填项），仓库标准文件齐全（`LICENSE` / `NOTICE` / `CONTRIBUTING.md` / `SECURITY.md` / `CHANGELOG.md` / `.editorconfig` / `.gitignore` / `Makefile` / `index.js` / `.github/` 的 CI、Issue / PR 模板、dependabot），文档四件套存在，`package.json` 的 `test` 依次串起四组，`docs/protocol.md` 写明 `gqy-jsonrpc-v1` 与隔离环境变量，全仓扫描不出现令牌形态字符串。
