@@ -351,6 +351,108 @@ test('github-account-default 隔离与越界探针', async () => {
   fs.writeFileSync(decoyGhHosts, 'github.com:\n    oauth_token: decoy-token-in-home\n    user: decoy-user\n');
   fs.writeFileSync(decoyGitconfig, '[user]\n\tname = 宿主用户\n\temail = host@example.com\n');
 
+  // 软链回归夹具（快照前建好，任何越界改动都会被「临时前缀目录快照」抓到）：
+  //   github/evil  -> $base/outside（根外目录，含假账号布局，只用于断言「不被读取/不被删」）
+  //   github/real  -> 根内真实 profile 目录；github/alias -> real（合法根内软链，不应误伤）
+  //   github/loop-a <-> github/loop-b（软链环，不得让进程崩）
+  const outsideDir = path.join(base, 'outside');
+  const OUTSIDE_FAKE_LOGIN = 'outside-fake-login';
+  const OUTSIDE_FAKE_TOKEN = 'OUTSIDE_TOKEN_DO_NOT_READ';
+  const writeFixture = (abs, content) => {
+    fs.writeFileSync(abs, content, { mode: 0o600 });
+    fs.chmodSync(abs, 0o600);
+  };
+  fs.mkdirSync(path.join(outsideDir, 'gh'), { recursive: true, mode: 0o700 });
+  fs.chmodSync(outsideDir, 0o700);
+  fs.chmodSync(path.join(outsideDir, 'gh'), 0o700);
+  writeFixture(path.join(outsideDir, 'account.json'), JSON.stringify({ login: OUTSIDE_FAKE_LOGIN, id: 987654 }) + '\n');
+  writeFixture(
+    path.join(outsideDir, 'gh', 'hosts.yml'),
+    'github.com:\n    users:\n        ' +
+      OUTSIDE_FAKE_LOGIN +
+      ':\n            oauth_token: ' +
+      OUTSIDE_FAKE_TOKEN +
+      '\n    git_protocol: https\n    oauth_token: ' +
+      OUTSIDE_FAKE_TOKEN +
+      '\n    user: ' +
+      OUTSIDE_FAKE_LOGIN +
+      '\n'
+  );
+  writeFixture(
+    path.join(outsideDir, 'profile.json'),
+    JSON.stringify({
+      schema: 1,
+      plugin: PLUGIN_ID,
+      version: '1.0.0',
+      profile: OUTSIDE_FAKE_LOGIN,
+      slug: 'evil',
+      host: 'github.com',
+      login: OUTSIDE_FAKE_LOGIN,
+      id: 987654,
+      scopes: [],
+      source: 'import',
+      token_kind: null,
+      git: { name: OUTSIDE_FAKE_LOGIN, email: '' },
+      created_at: '2026-11-02T00:00:00Z',
+      updated_at: '2026-11-02T00:00:00Z',
+      logged_in: true,
+    }) + '\n'
+  );
+  writeFixture(
+    path.join(outsideDir, 'gitconfig'),
+    '[user]\n\tname = ' + OUTSIDE_FAKE_LOGIN + '\n\temail = ' + OUTSIDE_FAKE_LOGIN + '@example.com\n'
+  );
+
+  const githubRootFixture = path.join(gqyHome, 'github');
+  fs.mkdirSync(githubRootFixture, { recursive: true, mode: 0o700 });
+  fs.chmodSync(githubRootFixture, 0o700);
+  const realProfileDir = path.join(githubRootFixture, 'real');
+  fs.mkdirSync(path.join(realProfileDir, 'gh'), { recursive: true, mode: 0o700 });
+  fs.chmodSync(realProfileDir, 0o700);
+  fs.chmodSync(path.join(realProfileDir, 'gh'), 0o700);
+  writeFixture(path.join(realProfileDir, 'account.json'), JSON.stringify({ login: 'real-inroot', id: 424242 }) + '\n');
+  writeFixture(path.join(realProfileDir, 'gh', 'config.yml'), 'version: 1\ngit_protocol: https\n');
+  writeFixture(
+    path.join(realProfileDir, 'gh', 'hosts.yml'),
+    'github.com:\n    users:\n        real-inroot:\n            oauth_token: INROOT_TOKEN_NOT_REAL\n    git_protocol: https\n    oauth_token: INROOT_TOKEN_NOT_REAL\n    user: real-inroot\n'
+  );
+  writeFixture(
+    path.join(realProfileDir, 'gitconfig'),
+    '[user]\n\tname = real-inroot\n\temail = real-inroot@users.noreply.github.com\n'
+  );
+  writeFixture(
+    path.join(realProfileDir, 'profile.json'),
+    JSON.stringify({
+      schema: 1,
+      plugin: PLUGIN_ID,
+      version: '1.0.0',
+      profile: 'real',
+      slug: 'real',
+      host: 'github.com',
+      login: 'real-inroot',
+      id: 424242,
+      scopes: [],
+      source: 'import',
+      token_kind: null,
+      git: { name: 'real-inroot', email: 'real-inroot@users.noreply.github.com' },
+      created_at: '2026-11-02T00:00:00Z',
+      updated_at: '2026-11-02T00:00:00Z',
+      logged_in: true,
+    }) + '\n'
+  );
+  fs.symlinkSync(outsideDir, path.join(githubRootFixture, 'evil'), 'dir');
+  fs.symlinkSync(realProfileDir, path.join(githubRootFixture, 'alias'), 'dir');
+  fs.symlinkSync(path.join(githubRootFixture, 'loop-b'), path.join(githubRootFixture, 'loop-a'), 'dir');
+  fs.symlinkSync(path.join(githubRootFixture, 'loop-a'), path.join(githubRootFixture, 'loop-b'), 'dir');
+
+  const outsideSnapshotBefore = snapshotTree(outsideDir);
+  const outsideAccountBefore = snapshotFile(path.join(outsideDir, 'account.json'));
+  const githubDirsBeforeSpawn = new Set(
+    fs.readdirSync(githubRootFixture, { withFileTypes: true })
+      .filter((item) => item.isDirectory())
+      .map((item) => item.name)
+  );
+
   const decoyBefore = { hosts: snapshotFile(decoyGhHosts), gitconfig: snapshotFile(decoyGitconfig) };
   const decoyDirEntriesBefore = fs.readdirSync(decoyGhDir).sort();
   const baseBefore = snapshotTree(base);
@@ -411,7 +513,11 @@ test('github-account-default 隔离与越界探针', async () => {
         .readdirSync(githubRootAfterStatus, { withFileTypes: true })
         .filter((item) => item.isDirectory())
         .map((item) => item.name);
-      check(subdirs.every((name) => name === '.probe'), 'status 的工具探测只允许写 <root>/.probe/，不得创建 profile 目录（实际子目录：' + subdirs.join(',') + '）');
+      const newSubdirs = subdirs.filter((name) => !githubDirsBeforeSpawn.has(name));
+      check(
+        newSubdirs.every((name) => name === '.probe'),
+        'status 的工具探测只允许写 <root>/.probe/，不得创建 profile 目录（新增子目录：' + newSubdirs.join(',') + '）'
+      );
       const probeDir = path.join(githubRootAfterStatus, '.probe');
       if (fs.existsSync(probeDir)) {
         checkMode(probeDir, 0o700, '工具探测隔离目录 .probe 权限应为 0700（docs/protocol.md §2）');
@@ -439,6 +545,92 @@ test('github-account-default 隔离与越界探针', async () => {
     // 失败路径之后进程仍可服务
     const afterProbes = await client.callAction('status', {});
     checkEqual(afterProbes.logged_in, false, '失败探针之后仍应是未登录状态');
+
+    // 3b) 软链越界回归（task-5 修复后的行为契约；verifier task-4 指出的覆盖缺口）
+    // 判定助手：软链环这类「降级可接受」的调用，要么成功返回 content，要么 -32000，不能崩进程。
+    const softResult = (reply, why) => {
+      if (reply.error) {
+        checkEqual(
+          reply.error.code,
+          -32000,
+          why + '：若报错应为 -32000（实际 ' + String(reply.error.code) + '：' + String(reply.error.message) + '）'
+        );
+        return null;
+      }
+      check(Boolean(reply.result) && typeof reply.result.content === 'string', why + '：应返回 result.content 或 -32000');
+      try {
+        return JSON.parse(reply.result.content);
+      } catch (err) {
+        check(false, why + '：result.content 不是合法 JSON（' + err.message + '）');
+        return null;
+      }
+    };
+
+    // 3b-1) 根内 -> 根外的 profile 软链：logout（含 purge）/ env / gh / git 必须 -32000
+    await client.expectError('logout', { profile: 'evil' }, -32000, 'logout 对根外软链 profile 应返回 -32000');
+    await client.expectError('logout', { profile: 'evil', purge: true }, -32000, 'logout purge=true 对根外软链 profile 应返回 -32000');
+    await client.expectError('env', { profile: 'evil' }, -32000, 'env 对根外软链 profile 应返回 -32000');
+    const ghEvil = await client.expectError('gh', { profile: 'evil', args: ['--version'] }, -32000, 'gh 对根外软链 profile 应返回 -32000');
+    check(/^profile 目录/.test(String(ghEvil.message)), 'gh 越界错误消息应以「profile 目录」开头（实际：' + String(ghEvil.message) + '）');
+    const gitEvil = await client.expectError('git', { profile: 'evil', args: ['--version'] }, -32000, 'git 对根外软链 profile 应返回 -32000');
+    check(/^profile 目录/.test(String(gitEvil.message)), 'git 越界错误消息应以「profile 目录」开头（实际：' + String(gitEvil.message) + '）');
+
+    // 3b-2) status 永不抛错，但不读逃逸目录：outside_writes:true + blocked + 未登录 + 不泄露假 login
+    const statusEvil = await client.callAction('status', { profile: 'evil' });
+    checkEqual(statusEvil.plugin, PLUGIN_ID, '根外软链 profile 的 status 仍应返回插件信息');
+    check(Boolean(statusEvil.isolated) && statusEvil.isolated.outside_writes === true, 'status 对根外软链应返回 isolated.outside_writes:true');
+    check(
+      typeof (statusEvil.isolated || {}).blocked === 'string' && statusEvil.isolated.blocked.trim().length > 0,
+      'status 对根外软链应给 isolated.blocked 原因'
+    );
+    checkEqual(statusEvil.logged_in, false, 'status 对根外软链应 logged_in:false（不读逃逸目录）');
+    checkEqual(statusEvil.account, null, 'status 对根外软链应 account:null（不读逃逸目录）');
+    checkEqual(statusEvil.pending, null, 'status 对根外软链应 pending:null');
+    const statusEvilRaw = JSON.stringify(statusEvil);
+    check(!statusEvilRaw.includes(OUTSIDE_FAKE_LOGIN), 'status 不得泄露根外目录里的假 login');
+    check(!statusEvilRaw.includes(OUTSIDE_FAKE_TOKEN), 'status 不得泄露根外目录里的假令牌标记');
+    const statusAfterEvil = await client.callAction('status', {});
+    check(!JSON.stringify(statusAfterEvil).includes(OUTSIDE_FAKE_LOGIN), '默认 status 的 profiles 扫描不得跟随根外软链');
+
+    // 3b-3) login-wait：missing 或 -32000 均可，进程不得崩
+    const waitEvilReply = await client.call('login-wait', { profile: 'evil', wait_s: 1 });
+    const waitEvilData = softResult(waitEvilReply, 'login-wait 对根外软链 profile');
+    check(
+      waitEvilData === null || (waitEvilData && waitEvilData.state === 'missing'),
+      'login-wait 对根外软链应返回 missing 或 -32000（实际：' + JSON.stringify(waitEvilData) + '）'
+    );
+
+    // 3b-4) 根内合法软链不误伤：outside_writes:false，env 可用且 realpath 仍在根内
+    const statusAlias = await client.callAction('status', { profile: 'alias' });
+    check(Boolean(statusAlias.isolated) && statusAlias.isolated.outside_writes === false, '根内合法软链 status 不应误伤（outside_writes:false）');
+    checkEqual((statusAlias.isolated || {}).blocked, null, '根内合法软链 status 的 isolated.blocked 应为 null');
+    const envAlias = await client.callAction('env', { profile: 'alias' });
+    check(isInside(gqyHome, envAlias.profile_dir), '根内合法软链的 env.profile_dir realpath 应在 GQY_HOME 内');
+    check(isInside(gqyHome, envAlias.gh_config_dir), '根内合法软链的 env.gh_config_dir realpath 应在 GQY_HOME 内');
+    check(isInside(gqyHome, envAlias.gitconfig), '根内合法软链的 env.gitconfig realpath 应在 GQY_HOME 内');
+    checkEqual(canonical(envAlias.profile_dir), canonical(realProfileDir), '根内合法软链的 env.profile_dir 应解析到根内真实 profile 目录');
+
+    // 3b-5) 软链环：status / logout / env 任一降级都可，但进程不崩
+    softResult(await client.call('status', { profile: 'loop-a' }), 'status 对软链环');
+    softResult(await client.call('logout', { profile: 'loop-a' }), 'logout 对软链环');
+    softResult(await client.call('env', { profile: 'loop-a' }), 'env 对软链环');
+
+    // 3b-6) 根外目录零增删改，且进程仍可服务
+    const outsideAfterSymlinkProbes = snapshotTree(outsideDir);
+    const outsideDiff = diffSnapshots(outsideSnapshotBefore, outsideAfterSymlinkProbes);
+    checkEqual(outsideDiff.added.length, 0, '软链越界探针不应在根外目录新增文件/目录（' + outsideDiff.added.join(',') + '）');
+    checkEqual(outsideDiff.removed.length, 0, '软链越界探针不应删除根外目录文件（' + outsideDiff.removed.join(',') + '）');
+    checkEqual(outsideDiff.changed.length, 0, '软链越界探针不应改动根外目录文件（' + outsideDiff.changed.join(',') + '）');
+    check(fs.existsSync(path.join(outsideDir, 'account.json')), '根外 account.json 必须仍然存在（logout 不得跟随软链删除）');
+    if (fs.existsSync(path.join(outsideDir, 'account.json'))) {
+      checkEqual(
+        snapshotFile(path.join(outsideDir, 'account.json')).content,
+        outsideAccountBefore.content,
+        '根外 account.json 内容应保持不变'
+      );
+    }
+    const aliveAfterSymlink = await client.callAction('status', {});
+    checkEqual(aliveAfterSymlink.plugin, PLUGIN_ID, '软链探针之后进程应仍可服务');
 
     // 4) 诱饵文件：内容 / 大小 / 权限 / mtime 完全未变（插件不读写宿主 gh/git 配置）
     const decoyAfter = { hosts: snapshotFile(decoyGhHosts), gitconfig: snapshotFile(decoyGitconfig) };
@@ -541,7 +733,7 @@ test('github-account-default 隔离与越界探针', async () => {
       INVALID_PROFILES.length +
       ' 个非法 profile × ' +
       PROFILE_PROBE_ACTIONS.length +
-      ' 个动作、诱饵未变、根外无写入，' +
+      ' 个动作、软链越界/合法软链/软链环回归、诱饵未变、根外无写入，' +
       (ownedDirCount > 0 ? '含 ' + ownedDirCount + ' 个插件自有子目录的权限检查' : '离线未创建 profile 目录，权限检查限于已创建层级') +
       '，' +
       checks +

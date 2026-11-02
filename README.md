@@ -106,7 +106,7 @@ git config --global user.name  # 读的是隔离 gitconfig
 
 | 动作 | 参数 | 返回摘要 |
 | --- | --- | --- |
-| `status` | `profile?`、`probe?`（默认 false，不联网） | `{plugin, version, default_profile, root, profile, profile_dir, gh_config_dir, gitconfig, host, logged_in, account, source, scopes, git, has_pending, pending, tools, profiles, isolated, verified}`；`probe:true` 用真实 API 复核，失败装进 `verified.ok=false`，永不抛错 |
+| `status` | `profile?`、`probe?`（默认 false，不联网） | `{plugin, version, default_profile, root, profile, profile_dir, gh_config_dir, gitconfig, host, logged_in, account, source, scopes, git, has_pending, pending, tools, profiles, isolated:{root, outside_writes, blocked}, verified}`；`probe:true` 用真实 API 复核，失败装进 `verified.ok=false`，永不抛错 |
 | `login` | `route`（必填：`device` / `gh` / `token` / `import`）、`profile?`、`host?`、`scopes?`、`client_id?`、`token?`、`path?`、`git_name?`、`git_email?`、`force?` | 成功 `{state:"ready", route, profile, host, login, id, scopes, source, config:{profile_dir, gh_config_dir, gitconfig, account_json}}`；device / gh 返回 `{state:"pending", …, user_code, verification_uri, expires_at}` |
 | `login-wait` | `profile?`、`wait_s?`（1–90，默认 20） | `state` ∈ `ready` / `pending` / `expired` / `denied` / `failed` / `missing`；`missing` 与 `expired` 不报错 |
 | `logout` | `profile?`、`purge?`（默认 false） | `{state:"logged-out", profile, removed:[...], purged}`；`purge:true` 删整个 profile 目录 |
@@ -116,8 +116,9 @@ git config --global user.name  # 读的是隔离 gitconfig
 
 几个共同点（细节见 [`docs/protocol.md`](docs/protocol.md) §5）：
 
-- 除 `status` / `env` 外，未登录时返回 `-32000`（消息以「未登录」开头，提示先 `login`）。
-- `gh` / `git` 的 `args` 直接 `spawn`，不过 shell、不做变量展开；`gh` 拒绝 `auth token`（任一段出现即拒，含 `--show-token`）、`auth login`、`auth logout`。
+- 未登录时可用的动作是 `status` / `env` / `login` / `login-wait` / `logout`（`logout` 幂等）；只有 `gh` / `git` 在未登录时返回 `-32000`（消息以「未登录」开头，提示先 `login`）。
+- `gh` / `git` 的 `args` 直接 `spawn`，不过 shell、不做变量展开；`gh` 拒绝相邻的 `auth`+`token`（防令牌输出）、`auth`+`login` / `auth`+`logout`（登录请用 `login` 动作），任一参数含 `--show-token` 也直接拒绝。
+- `status` 的 `isolated`：正常是 `{root, outside_writes:false, blocked:null}`；profile 目录（含软链解析结果）在根外时 `outside_writes:true`、`blocked` 给原因，同时 `logged_in:false`、`account:null`（不读逃逸目录），`status` 本身永不抛错。
 - 子进程超时默认 30s、上限 90s：先 `SIGTERM`，2s 不退再 `SIGKILL`，按进程组回收；stdout / stderr 各截断到 1 MiB。
 - `logout` **不联网、不吊销远端令牌**（吊销需要 `client_secret`，插件不持有）；需要作废令牌请到 GitHub 设置页操作。
 
@@ -148,15 +149,16 @@ $GQY_HOME/plugins/github-account-default/
 
 - **只写一个根**：`$GQY_HOME/github/`。不读也不写 `~/.config/gh`、`~/.gitconfig`、`~/.config/git/config`、系统 git 配置；不写 shell rc，不改宿主的 gh 登录态。
 - **子进程环境强制覆盖**：`GH_CONFIG_DIR`、`XDG_STATE_HOME`、`XDG_DATA_HOME`、`GIT_CONFIG_GLOBAL`、`GIT_CONFIG_NOSYSTEM=1` 不继承宿主值（gh 的 `--version` 也会往 `$XDG_STATE_HOME/gh/device-id` 写文件，所以 state / data 目录必须一起指进 profile）；gh 另加 `GH_PROMPT_DISABLED=1` / `GH_NO_UPDATE_NOTIFIER=1` / `GH_PAGER=cat` / `NO_COLOR=1` / `CLICOLOR=0`，git 另加 `GIT_TERMINAL_PROMPT=0` / `GIT_PAGER=cat`。`status` 的 gh / git 版本探测只写 `<root>/.probe/`，不碰 `$HOME`、不创建 profile 目录。
-- **路径与权限**：profile 目录 `0700`，`account.json` / `hosts.yml` / `profile.json` / `pending.json` / `gitconfig` 权限 `0600`；写入一律「临时文件 + rename」原子落盘；路径先 `path.resolve` 再校验仍在根内，软链目标越界报 `-32000`。
+- **路径与权限**：profile 目录 `0700`，`account.json` / `hosts.yml` / `profile.json` / `pending.json` / `gitconfig` 权限 `0600`；写入一律「临时文件 + rename」原子落盘；路径先 `path.resolve` 再校验仍在根内，软链解析结果越界报 `-32000`。
+- **根外一律拒绝**：profile 目录（含软链解析结果）在根外时，`logout`（含 purge）、`env`、`gh`、`git`、`login-wait` 一律 `-32000`，绝不删除或写入根外文件；`status` 不抛错，用 `isolated.outside_writes:true` + `blocked` 标出，并且不读逃逸目录。
 - **令牌不回显、不落日志**：令牌只存在于进程内存与 `gh/hosts.yml`（0600）；`pending.json` 只有短时有效的 `device_code`（gh 路径是 `gh_pid`），不含令牌。所有结果 / 错误 / stderr 统一脱敏（`gh[pousr]_*`、`github_pat_*`、`Authorization:` 头、`oauth_token:` 行）；不写请求日志，stderr 只有动作名、成败与耗时这类元信息。
 - **不碰宿主交互面**：不拉起浏览器、不弹窗、不调系统钥匙串、不改剪贴板；设备码只作为结果返回。
 
 ## 工具名
 
-加载成功后七个动作注册成外部工具（04 P11）：
+加载成功后七个动作注册成外部工具（04 P11）。GQY 的 `ToolName` 会把插件 id 与动作名里的非字母数字字符统一转成 `_`（见 [`GQY/app/internal/plugin/tool.go`](../GQY/app/internal/plugin/tool.go)），所以 `github-account-default` 加 `login-wait` 实际得到的是 `github_account_default__login_wait`。实际工具名：
 
-`github-account-default__status`、`github-account-default__login`、`github-account-default__login-wait`、`github-account-default__logout`、`github-account-default__env`、`github-account-default__gh`、`github-account-default__git`。
+`github_account_default__status`、`github_account_default__login`、`github_account_default__login_wait`、`github_account_default__logout`、`github_account_default__env`、`github_account_default__gh`、`github_account_default__git`。
 
 默认不注入模型：外部工具只在 `GQY_ENABLE_EXTERNAL=1` 或运行时开关开启时进 agent 的工具列表；HTTP `POST /api/plugins/github-account-default/call` 始终可单独调试。
 

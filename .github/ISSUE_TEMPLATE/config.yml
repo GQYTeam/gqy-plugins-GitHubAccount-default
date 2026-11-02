@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 安全漏洞
-    url: https://github.com/GQYTeam/<REPO>/security/advisories/new
+    url: https://github.com/GQYTeam/gqy-plugins-GitHubAccount-default/security/advisories/new
     about: 不要公开披露漏洞，请走私密报告。
   - name: 使用与部署问题
-    url: https://github.com/GQYTeam/<REPO>/blob/main/README.md
+    url: https://github.com/GQYTeam/gqy-plugins-GitHubAccount-default/blob/main/README.md
     about: 先看 README 与 docs/，没有答案再开 issue。

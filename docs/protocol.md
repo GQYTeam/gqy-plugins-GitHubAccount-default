@@ -37,7 +37,7 @@ $GQY_HOME/github/
 - 目录权限 `0700`，`account.json` / `hosts.yml` / `profile.json` / `pending.json` / `gitconfig` 权限 `0600`；写入一律「临时文件 + rename」原子落盘。
 - `profile-slug`：默认 profile 的显示名是 `顾清影`；slug 由显示名规范化得到——Unicode 字母 / 数字 / `.` / `_` / `-` 保留，其余字符（空格、`/`、`\`、控制字符等）替换为 `-`，折叠连续 `-`、去首尾 `-`；空结果回退 `default`。profile 参数必须能规范化成非空 slug，且不得为 `.` / `..`、不得含路径分隔符或 NUL，否则 `-32602`。
 - 所有路径先 `path.resolve` 再校验仍在 `$GQY_HOME/github/` 之内；软链解析后的目标同样必须在根内（越界报 `-32000`），不跟随指向根外的软链。
-- 清理逻辑（`logout purge`）只删根内的 profile 目录；根、根外、软链目标越界一律拒绝。
+- 清理与写入类动作（`logout` 含 purge、`env`、`gh`、`git`、`login-wait` 落盘）在动手前对 profile 目录（含软链解析结果）做根内校验，越界一律 `-32000`；**绝不删除、写入根外任何文件**（内部工具如 `removeFileQuietly` 也必须先做词法 + realpath 双重校验）。
 
 ## 3. 隔离规则（硬约束）
 
@@ -95,7 +95,7 @@ $GQY_HOME/github/
   "pending": null,                               // 有进行中登录时为 {route, user_code, verification_uri, expires_at}
   "tools": {"gh": {"available": true, "version": "gh version 2.103.3 (...)"}, "git": {"available": true, "version": "git version 2.x"}},
   "profiles": [{"profile": "<slug>", "display_name": "...", "login": "...|null", "logged_in": true, "host": "github.com"}],
-  "isolated": {"root": "<绝对路径>", "outside_writes": false},
+  "isolated": {"root": "<绝对路径>", "outside_writes": false, "blocked": null},
   "verified": null                               // probe=true 时为 {"ok":true,"login":"...","id":n,"scopes":[...],"checked_at":"RFC3339"} 或 {"ok":false,"status":401,"message":"..."}
 }
 ```
@@ -104,6 +104,7 @@ $GQY_HOME/github/
 - `profiles`：扫描 `$GQY_HOME/github/*/profile.json`（最多 100 条）；无法解析的目录跳过，不报错。
 - `probe=true`：用现令牌 `GET https://api.github.com/user`（超时 10s）复核，**不抛错**——401/403/网络错误都装进 `verified.ok=false`。
 - `status` 永不返回令牌；`scopes` 来自 `profile.json`（import 时来自令牌端点响应头）。
+- `isolated.outside_writes`：profile 目录（含软链解析结果）是否落在 `$GQY_HOME/github/` 之外；为 `true` 时 `blocked` 给原因、`logged_in:false`、`account:null`，且不读逃逸目录里的任何文件。正常恒为 `false` + `blocked:null`。
 
 ### 5.2 `login`
 
@@ -158,6 +159,7 @@ $GQY_HOME/github/
   - 其它 `error` → 清 pending，`state:"failed"` + `error` 原文；
   - 成功 → 校验 `GET /user` → 落盘（source=device）→ `state:"ready"`；
   - `wait_s` 用尽仍 pending → `{"state":"pending","remaining_s":<n>,"next_poll_s":<n>,"user_code":...,"verification_uri":...}`。
+- profile 目录（含软链目标）越出根 → `-32000`，不读也不写逃逸目录。
 - `route=gh`：子进程已退出 0 且 `gh/hosts.yml` 出现令牌 → 读 hosts 取令牌与 login → `GET /user` 复核 → 补 `account.json` / `gitconfig` / `profile.json`（`gh/config.yml`、`hosts.yml` 由 gh 自己写，保持不动）→ ready；子进程非 0 退出 → `{"state":"failed","exit_code":n,"message":"<stderr 尾部脱敏>"}`；子进程还在跑 → pending（带 `remaining_s`）。
 - ready 后删 `pending.json` 与内存状态；`state:"ready"` 的字段同 `login` ready：`{"state":"ready","route","profile","host","login","id","scopes","source","config":{"profile_dir","gh_config_dir","gitconfig","account_json"}}`。
 
@@ -165,6 +167,7 @@ $GQY_HOME/github/
 
 参数：`{profile?, purge?: boolean}`。
 
+- profile 目录（含软链解析结果）在根外 → `-32000`「profile 目录…」，**任何情况下都不越过根删除**（软链指向根外的文件原样保留）。
 - 未登录且目录不存在 → 幂等返回 `{"state":"logged-out","profile":...,"removed":[],"purged":false}`。
 - 非 purge：只从 `gh/hosts.yml` 删 `oauth_token` 字段与 `users.<login>` 条目（保留 config.yml、gitconfig、profile.json），删 `account.json` 与 `pending.json`，`profile.json` 置 `logged_in:false`。
 - purge：先按 §3 校验路径在根内，再 `rm -rf` 整个 profile 目录。
@@ -193,11 +196,14 @@ $GQY_HOME/github/
 
 `exports` 每行都是 `export KEY='值'`：所有值一律单引号包裹（含 `1` / `0`），值内部的单引号转义为 `'\''`，保证可直接粘贴执行。
 
+`profile_dir` / `gh_config_dir` / `gitconfig` 的软链解析结果必须在根内；越界 `-32000`（不返回逃逸路径，避免调用方把导出变量带出根外）。
+
 ### 5.6 `gh` / `git`
 
 参数：`gh {args: string[], profile?, timeout_s?: 1..90, stdin?}`、`git {args: string[], profile?, cwd?, timeout_s?: 1..90}`。
 
 - `args` 必须是 1–64 个非空字符串、单个 ≤4096 字符、不含 NUL（否则 `-32602`）；argv 直接 `spawn`，不过 shell、不做变量展开。
+- profile 目录（含软链目标）在根外 → `-32000`「profile 目录…」，不用逃逸的 `GH_CONFIG_DIR` / `GIT_CONFIG_GLOBAL` 起子进程。
 - 未登录 → `-32000`「未登录」。
 - `gh` 额外拒绝：`auth token`（任一段，含 `--show-token`）→ `-32000`「不通过插件取令牌」；`auth login` / `auth logout` → `-32000`「登录用 login 动作」（`--show-token` 属同一防御：令牌不经插件输出）。
 - `git` 的 `cwd` 必须存在且是目录（否则 `-32602`），缺省插件进程 cwd。

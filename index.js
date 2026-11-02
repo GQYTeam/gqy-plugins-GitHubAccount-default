@@ -347,6 +347,25 @@ function profilePaths(slug) {
   };
 }
 
+// §2 / §3：profile 目录及其软链目标必须都在根内。软链指向根外时一律拒绝（-32000）。
+// 逐个检查 profile 目录、gh/、gh-state/、gh-data/、gitconfig，防止「profile 目录正常、单个子路径指到根外」。
+function profileEscapeReason(p) {
+  for (const target of [p.dir, p.ghDir, p.stateDir, p.dataDir, p.gitconfig]) {
+    try {
+      guardInternalPath(target);
+    } catch {
+      return 'profile 目录软链指向根外：' + truncate(redact(target), 200);
+    }
+  }
+  return null;
+}
+
+function assertProfilePathsSafe(p) {
+  const reason = profileEscapeReason(p);
+  if (reason) throw new BizError(reason);
+  return p;
+}
+
 function ensureRoot() {
   try {
     fs.mkdirSync(GQY_ROOT, { recursive: true, mode: 0o700 });
@@ -370,6 +389,7 @@ function ensureDir0700(dir) {
 function ensureProfileDir(slug) {
   const p = profilePaths(slug);
   ensureRoot();
+  assertProfilePathsSafe(p);
   assertRealPathInsideRoot(p.dir);
   ensureDir0700(p.dir);
   assertRealPathInsideRoot(p.ghDir);
@@ -475,14 +495,18 @@ function writeJsonAtomic(file, value) {
   return writeFileAtomic(file, JSON.stringify(value, null, 2) + '\n', 0o600);
 }
 
+// 删除根内文件：词法 + realpath 双校验；软链目标在根外时绝不 unlink（§2 / §3）。
 function removeFileQuietly(file) {
+  let resolved;
   try {
-    const resolved = assertLexicalInsideRoot(file);
+    resolved = guardInternalPath(file);
+  } catch {
+    return false;
+  }
+  try {
     fs.unlinkSync(resolved);
     return true;
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return false;
-    if (err instanceof BizError) return false;
+  } catch {
     return false;
   }
 }
@@ -749,6 +773,7 @@ function profileGitValue(profileJson) {
 
 // 收集一个 profile 的当前状态：account.json + gh/hosts.yml 同时成立才算已登录。
 function readLoginState(p) {
+  assertProfilePathsSafe(p);
   const profJson = readProfileJsonSafe(p.profileJson);
   const host = hostOf(profJson);
   const account = readAccountSafe(p.account);
@@ -1641,10 +1666,20 @@ async function actionStatus(args) {
     pending: null,
     tools: { gh: { available: false, version: null }, git: { available: false, version: null } },
     profiles: [],
-    isolated: { root: GQY_ROOT, outside_writes: false },
+    isolated: { root: GQY_ROOT, outside_writes: false, blocked: null },
     verified: probe ? { ok: false, status: null, message: '尚未复核' } : null,
   };
   try {
+    // §5.1：profile 目录软链指向根外时，status 永不抛错，但绝不读逃逸目录里的任何文件；
+    // 用 isolated.outside_writes / blocked 标识实际被阻断，logged_in / account 保持未登录。
+    const escape = profileEscapeReason(p);
+    if (escape) {
+      out.isolated = { root: GQY_ROOT, outside_writes: true, blocked: escape };
+      out.tools = await probeTools();
+      out.profiles = scanProfiles();
+      if (probe) out.verified = { ok: false, status: null, message: 'profile 目录软链指向根外，未做复核' };
+      return out;
+    }
     const state = readLoginState(p);
     out.host = state.host;
     if (state.profJson && typeof state.profJson.profile === 'string' && state.profJson.profile.trim()) {
@@ -2034,6 +2069,8 @@ async function loginWithGh(ctx) {
 
 async function actionLogin(args) {
   const ctx = validateLoginArgs(args);
+  // §2 / §3：profile 目录软链指向根外时，任何登录路径都直接拒绝，不读也不写逃逸目录。
+  assertProfilePathsSafe(profilePaths(ctx.prof.slug));
   if (ctx.route === 'token') return loginWithToken(ctx);
   if (ctx.route === 'import') return loginWithImport(ctx);
   if (ctx.route === 'device') return loginWithDevice(ctx);
@@ -2281,6 +2318,8 @@ async function actionLoginWait(args) {
     waitS = args.wait_s;
   }
   const p = profilePaths(prof.slug);
+  // §5.3：读 pending.json 与后续落盘前先校验 profile 路径在根内，逃逸一律 -32000。
+  assertProfilePathsSafe(p);
   const pending = getPendingState(prof.slug, p);
   if (!pending) return { state: 'missing', hint: '没有进行中的登录，先调用 login' };
   const expiresMs = Date.parse(pending.expires_at || '');
@@ -2333,6 +2372,8 @@ async function actionLogout(args) {
     purge = args.purge;
   }
   const p = profilePaths(prof.slug);
+  // §2 / §3：profile 目录（含软链目标）在根外时，非 purge 与 purge 一律拒绝，绝不删除根外文件。
+  assertProfilePathsSafe(p);
 
   // 内存里的 pending（可能带 gh 子进程）先收掉，避免退出后留孤儿。
   const memoryPending = pendingMemory.get(prof.slug);
@@ -2397,6 +2438,8 @@ function shellQuote(value) {
 function actionEnv(args) {
   const prof = resolveProfile(args.profile);
   const p = profilePaths(prof.slug);
+  // §5.5：profile_dir / gh_config_dir / gitconfig 都要过 realpath 校验，软链逃逸一律 -32000。
+  assertProfilePathsSafe(p);
   const state = readLoginState(p);
   const env = {
     GH_CONFIG_DIR: p.ghDir,
@@ -2445,6 +2488,7 @@ function rejectGhSecretCommands(argv) {
 
 async function runToolAction(options) {
   const p = profilePaths(options.prof.slug);
+  assertProfilePathsSafe(p);
   const state = readLoginState(p);
   if (!state.loggedIn) {
     throw new BizError('未登录：先调用 login 动作登录 GitHub 账号（profile: ' + options.prof.slug + '）');

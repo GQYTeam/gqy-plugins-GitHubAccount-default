@@ -4,7 +4,16 @@
 
 ## [Unreleased]
 
-（暂无）
+### Security
+
+- 修复 profile 目录软链逃逸：`logout`（含 purge）原先只做词法校验，会跟随「根内指向根外的目录软链」删除根外文件；`env` 会返回逃逸路径，`gh` / `git` 会用逃逸的 `GH_CONFIG_DIR` / `GIT_CONFIG_GLOBAL` 在根外写。现在 `profileEscapeReason` / `assertProfilePathsSafe` 对 profile 目录及 `gh/`、`gh-state/`、`gh-data/`、`gitconfig` 逐个做词法 + realpath 校验，`removeFileQuietly` 也改走 `guardInternalPath`；`logout` / `env` / `gh` / `git` / `login` / `login-wait` / 落盘与读令牌前一律 `-32000`，根外零删除零写入。
+- `status` 保持永不抛错：profile 目录逃逸时返回 `isolated.outside_writes:true` + `blocked` 原因、`logged_in:false`、`account:null`，且不读逃逸目录里的任何文件。
+- `test/isolation.mjs` 新增软链越界回归（根外软链 / 子路径逃逸 / 根内合法软链不误伤 / 软链环），检查项 415 → 483。
+
+### Fixed
+
+- 文档修正（对照 verifier 复核）：测试检查项数改为实测值（`manifest` 229 / `handshake` 347 / `isolation` 483；带 `GQY_GITHUB_TEST_LAYOUT` 时真实上游 281 项）；工具名按 GQY `ToolName` 规则改为下划线形式（`github_account_default__status` 等，非字母数字统一转 `_`）；未登录可用动作改为 `status` / `env` / `login` / `login-wait` / `logout`（只有 `gh` / `git` 未登录返回 `-32000`）；`gh` 拒绝规则改为「相邻的 `auth`+`token`（或 `auth`+`login` / `auth`+`logout`）或任一参数含 `--show-token`」。
+- 文档补充新契约：`status.isolated` 为 `{root, outside_writes, blocked}`，根外软链时 `outside_writes:true`、`blocked` 给原因、`logged_in:false`、`account:null` 且不读逃逸目录；`logout`（含 purge）/ `env` / `gh` / `git` / `login-wait` 对根外 profile 一律 `-32000`，绝不删除或写入根外文件。
 
 ## [1.0.0] - 2026-11-02
 
