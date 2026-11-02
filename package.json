@@ -1,0 +1,18 @@
+{
+  "name": "gqy-plugins-github-account-default",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GQY GitHub 账号插件：远程设备码授权 + 本地登录，gh / git 全程走隔离配置目录；status / login / login-wait / logout / env / gh / git 七个动作",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GQYTeam/gqy-plugins-GitHubAccount-default.git"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "scripts": {
+    "test": "node test/manifest.mjs && node test/handshake.mjs && node test/isolation.mjs && node test/real-upstream.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

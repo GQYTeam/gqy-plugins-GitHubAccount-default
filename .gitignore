@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# 依赖与构建产物
+node_modules/
+dist/
+tmp/
+
+# 日志与系统垃圾
+*.log
+Thumbs.db
+
+# 本地密钥与账号数据（插件只写 $GQY_HOME/github/，这里再兜一道）
+.env
+.env.*
+*credentials*
+account.json
+hosts.yml
+gitconfig
+pending.json

@@ -1,0 +1,49 @@
+name: 功能需求
+description: 提出新能力或行为变更
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 谁在什么场景下卡住了；不要直接写实现方案。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的行为
+      description: 从使用者视角描述最终效果，能验收的那种。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 备选方案与取舍
+      description: 考虑过的其他做法，以及为什么不选。
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响面
+      multiple: true
+      options:
+        - 文档
+        - 运行时 / 核心逻辑
+        - 插件
+        - 前端 / 交互
+        - CI / 发布
+        - 其他
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 已搜索过重复 issue
+          required: true
+        - label: 这不是安全漏洞（安全漏洞见 SECURITY.md）
+          required: true

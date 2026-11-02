@@ -1,0 +1,50 @@
+name: Bug 报告
+description: 报告可复现的错误
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先搜一遍已有 issue，避免重复。安全漏洞不要走这里，按 `SECURITY.md` 走私密披露。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 现象
+      description: 实际发生了什么，期望是什么。
+      placeholder: 期望…，实际…
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 能重复触发的最短路径，含命令、请求或操作。
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / 提交
+      description: tag、commit SHA 或分支名。
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 环境
+      description: OS + 架构 + 运行时版本（如 macOS 15 / arm64 / Go 1.22 / Node 20）。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与报错
+      description: 贴关键日志。先删掉密钥、令牌与用户正文。
+      render: text
+    validations:
+      required: false

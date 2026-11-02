@@ -1,0 +1,29 @@
+# NOTICE · 来源与署名
+
+Required Notice: Copyright (c) 2026 GQYTeam (https://github.com/GQYTeam/gqy-plugins-GitHubAccount-default)
+
+本仓库 `GQYTeam/gqy-plugins-GitHubAccount-default` 按 **PolyForm Noncommercial License 1.0.0** 授权，全文见 `LICENSE`。要点：
+
+1. **禁止商用。** 生产、部署、售卖、SaaS、内置于商业产品等任何商业目的的使用，都不在授权范围内。
+2. **必须署名。** fork、二次开发、摘取代码 / 文档 / 设计，都必须标注来源与原作者。
+3. **保留通知。** 分发任何副本（含修改后的）必须带上 `LICENSE`、本 `NOTICE` 和上面的 Required Notice 原文。
+
+## 署名格式
+
+在衍生项目的 `README.md`（或同等声明文件）里原样写清这四项：
+
+```text
+来源项目：GQYTeam/gqy-plugins-GitHubAccount-default
+项目地址：https://github.com/GQYTeam/gqy-plugins-GitHubAccount-default
+原作者：GQYTeam
+许可证：PolyForm Noncommercial License 1.0.0
+```
+
+示例：
+
+> 本项目基于 GQYTeam/gqy-plugins-GitHubAccount-default（https://github.com/GQYTeam/gqy-plugins-GitHubAccount-default）修改，
+> 原作者 GQYTeam，遵循 PolyForm Noncommercial License 1.0.0。
+
+## 第三方素材与参考项目
+
+本仓库引用的第三方代码、素材、参考项目，其许可与出处记在 `docs/third-party/`，各自许可优先于本仓库许可；分发这些部分时必须同时保留其许可与 Required Notice。

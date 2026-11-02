@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Node 20 · 语法检查 + npm test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # 本仓库零依赖、无 lockfile：有 lockfile 才真正安装，否则跳过（标准 §6 的 npm ci || true）。
+      - name: 安装依赖
+        run: npm ci || true
+
+      - name: 语法检查（入口）
+        run: node --check index.js
+
+      - name: 语法检查（全部 .mjs 测试）
+        run: find . -name '*.mjs' -not -path './node_modules/*' -exec node --check {} +
+
+      - name: 测试（manifest / 握手 / 隔离 / 真实上游）
+        run: npm test
+        env:
+          # 真实上游用例在没有令牌时自动跳过；仓库不预置任何令牌。
+          GQY_GITHUB_TEST_TOKEN: ${{ secrets.GQY_GITHUB_TEST_TOKEN }}
+          GQY_GITHUB_TEST_LAYOUT: ${{ vars.GQY_GITHUB_TEST_LAYOUT }}

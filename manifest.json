@@ -1,0 +1,106 @@
+{
+  "id": "github-account-default",
+  "name": "GitHub 账号（顾清影 专属）",
+  "version": "1.0.0",
+  "description": "为 顾清影 专属的 GitHub 账号插件：远程设备码授权后在本机完成登录，gh 与 git 全程走隔离配置目录（GH_CONFIG_DIR / GIT_CONFIG_GLOBAL），提供 status / login / login-wait / logout / env / gh / git 七个动作",
+  "protocol": "gqy-jsonrpc-v1",
+  "command": ["node", "index.js"],
+  "cwd": ".",
+  "timeout_ms": 120000,
+  "concurrency": "single-channel",
+  "actions": [
+    {
+      "name": "status",
+      "description": "查看账号状态：当前 profile、登录与否、login/id、来源、隔离路径、gh/git 可用性、全部 profile；probe=true 时用真实 GitHub API 复核身份",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "profile": {"type": "string", "description": "账号 profile，默认 顾清影"},
+          "probe": {"type": "boolean", "description": "是否调用 GitHub API 复核令牌，默认 false"}
+        }
+      }
+    },
+    {
+      "name": "login",
+      "description": "发起登录：device=原生 GitHub 设备码授权（远程授权、本地登录）；gh=委托隔离的 gh auth login --web；token=导入 PAT 并校验；import=收养已有的 account.json + gh/ + gitconfig 目录布局",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "route": {"type": "string", "enum": ["device", "gh", "token", "import"], "description": "登录路径"},
+          "profile": {"type": "string", "description": "账号 profile，默认 顾清影"},
+          "host": {"type": "string", "description": "GitHub 主机名，默认 github.com"},
+          "scopes": {"type": "string", "description": "device 路径的 OAuth scope，逗号分隔，默认 repo,read:org,gist,workflow"},
+          "client_id": {"type": "string", "description": "device 路径的 OAuth App / GitHub App client_id；缺省读 GQY_GITHUB_CLIENT_ID 或 $GQY_HOME/github/client.json"},
+          "token": {"type": "string", "description": "token 路径的令牌：ghp_ / github_pat_ / gho_"},
+          "path": {"type": "string", "description": "import 路径要收养的目录（含 account.json、gh/、可选 gitconfig）"},
+          "git_name": {"type": "string", "description": "提交身份 user.name，默认登录名"},
+          "git_email": {"type": "string", "description": "提交身份 user.email，默认 GitHub noreply 邮箱"},
+          "force": {"type": "boolean", "description": "import 时身份与令牌不一致仍收养"}
+        },
+        "required": ["route"]
+      }
+    },
+    {
+      "name": "login-wait",
+      "description": "等待进行中的登录完成：device 路径轮询令牌端点并在成功后落盘；gh 路径读取隔离 gh 子进程结果；单次最多等 90 秒，超时返回 pending 供再次调用",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "profile": {"type": "string", "description": "账号 profile，默认 顾清影"},
+          "wait_s": {"type": "integer", "minimum": 1, "maximum": 90, "default": 20, "description": "本次最多等待秒数"}
+        }
+      }
+    },
+    {
+      "name": "logout",
+      "description": "退出登录：清掉隔离 hosts.yml 里的令牌与 account.json；purge=true 连整个 profile 目录一起删",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "profile": {"type": "string", "description": "账号 profile，默认 顾清影"},
+          "purge": {"type": "boolean", "description": "是否删除整个 profile 目录，默认 false"}
+        }
+      }
+    },
+    {
+      "name": "env",
+      "description": "取隔离环境变量：GH_CONFIG_DIR、GIT_CONFIG_GLOBAL 等，供调用方在插件之外复用同一套隔离账号；不返回令牌",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "profile": {"type": "string", "description": "账号 profile，默认 顾清影"}
+        }
+      }
+    },
+    {
+      "name": "gh",
+      "description": "在隔离配置目录里执行 gh 命令（argv 数组、不过 shell），返回 exit_code / stdout / stderr；拒绝 gh auth token 类泄露命令并统一脱敏",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "args": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "gh 参数数组，如 [\"api\",\"user\",\"--jq\",\".login\"]"},
+          "profile": {"type": "string", "description": "账号 profile，默认 顾清影"},
+          "timeout_s": {"type": "integer", "minimum": 1, "maximum": 90, "default": 30},
+          "stdin": {"type": "string", "description": "可选的 stdin 文本"}
+        },
+        "required": ["args"]
+      }
+    },
+    {
+      "name": "git",
+      "description": "在隔离 git 配置下执行 git 命令（argv 数组、不过 shell，GIT_CONFIG_GLOBAL 指向 profile 的 gitconfig）；返回 exit_code / stdout / stderr",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "args": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "git 参数数组，如 [\"config\",\"--global\",\"user.name\"]"},
+          "profile": {"type": "string", "description": "账号 profile，默认 顾清影"},
+          "cwd": {"type": "string", "description": "工作目录，默认插件进程当前目录；必须是已存在目录"},
+          "timeout_s": {"type": "integer", "minimum": 1, "maximum": 90, "default": 30}
+        },
+        "required": ["args"]
+      }
+    }
+  ],
+  "provides": [],
+  "requires": []
+}
